@@ -1,0 +1,50 @@
+name: 微台指監控
+
+on:
+  schedule:
+    # =============================================
+    # 日盤（台指期 08:45~13:45）
+    # =============================================
+    # 08:48 台灣 = 00:48 UTC → 開盤快報（等開盤後 3 分鐘價格穩定）
+    - cron: '48 0 * * 1-5'
+    # 11:33 台灣 = 03:33 UTC → 盤中快報
+    - cron: '33 3 * * 1-5'
+    # 13:33 台灣 = 05:33 UTC → 收盤前 12 分鐘預警
+    - cron: '33 5 * * 1-5'
+
+    # =============================================
+    # 夜盤（台指期 15:00~05:00 隔日）
+    # =============================================
+    # 15:03 台灣 = 07:03 UTC → 夜盤開盤快報
+    - cron: '3 7 * * 1-5'
+    # 21:48 台灣 = 13:48 UTC → 美股開盤後 18 分鐘（紐約 09:30）
+    - cron: '48 13 * * 1-5'
+    # 04:48 台灣 = 20:48 UTC（前日）→ 夜盤收盤前 12 分鐘
+    # 注意：UTC 20:48 對應台灣隔日 04:48，需在週一~週五觸發
+    - cron: '48 20 * * 0-4'
+
+  workflow_dispatch:
+
+jobs:
+  futures-monitor:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Taipei
+
+    steps:
+      - name: 下載程式碼
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝套件
+        run: pip install -r requirements-futures.txt
+
+      - name: 執行微台指監控
+        env:
+          LINE_TOKEN:   ${{ secrets.LINE_TOKEN }}
+          LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+        run: python futures_monitor.py
