@@ -14,37 +14,39 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 LINE_TOKEN   = os.environ.get("LINE_TOKEN", "")
 LINE_USER_ID = os.environ.get("LINE_USER_ID", "")
 
+# Google Sheet CSV 匯出網址（已設定你的 Sheet ID）
 GSHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1OW7i2D8Auk6n3fnJPnbf4EOosEphe--NEASJjoSpVdg"
     "/export?format=csv&gid=0"
 )
 
-TW_TIMEZONE  = pytz.timezone("Asia/Taipei")
-US_TIMEZONE  = pytz.timezone("America/New_York")
+TW_TIMEZONE = pytz.timezone("Asia/Taipei")
 
-MXF_MULTIPLIER      = 10     # 微台指每點 10 元
-ROLLOVER_WARN_DAYS  = 3      # 結算前幾個交易日提醒轉倉
+MXF_MULTIPLIER      = 10     # 微台指每點 10 元（固定）
+ROLLOVER_WARN_DAYS  = 3      # 結算前幾個交易日開始提醒轉倉
 CRASH_TW_PCT        = -2.5   # 台指急跌警示門檻
 CRASH_US_PCT        = -1.5   # 美股急跌警示門檻
 VIX_WARN            = 25     # VIX 警示門檻
 
-# 判斷目前是日盤還是夜盤
-# 日盤：08:45 ~ 13:45
-# 夜盤：15:00 ~ 05:00（隔日）
+
+# ==========================================
+# 2. 判斷目前時段
+#    日盤：08:45 ~ 13:45
+#    夜盤：15:00 ~ 隔日 05:00
+# ==========================================
 def get_session():
     now = datetime.datetime.now(TW_TIMEZONE)
-    h, m = now.hour, now.minute
-    total = h * 60 + m
+    total = now.hour * 60 + now.minute
     if 8*60+45 <= total <= 13*60+45:
-        return "DAY"    # 日盤
+        return "DAY"
     elif total >= 15*60 or total <= 5*60:
-        return "NIGHT"  # 夜盤
-    return "CLOSED"     # 休市中
+        return "NIGHT"
+    return "CLOSED"
 
 
 # ==========================================
-# 2. 自動抓取保證金（期交所）
+# 3. 自動抓取保證金（期交所官網）
 # ==========================================
 def fetch_mxf_margin():
     print("💰 抓取期交所保證金公告...")
@@ -81,47 +83,60 @@ def fetch_mxf_margin():
 
 
 # ==========================================
-# 3. 自動抓取台灣假日（證交所 API）
+# 4. 自動抓取台灣假日（證交所 API）
+#    ✅ 修正：queryYear 使用民國年（西元 - 1911）
 # ==========================================
 def fetch_tw_holidays():
     print("📅 抓取台灣假日...")
     holidays = set()
     now = datetime.datetime.now(TW_TIMEZONE)
+
     for year in [now.year, now.year + 1]:
         try:
-            roc_year = year - 1911   # ✅ 西元年轉民國年
-            url = ("https://www.twse.com.tw/rwd/zh/holiday/holidaySchedule"
-                   "?response=json&queryYear=" + str(roc_year))
-            data = requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
-                                timeout=15).json()
+            roc_year = year - 1911  # ✅ 西元年轉民國年
+            url = (
+                "https://www.twse.com.tw/rwd/zh/holiday/holidaySchedule"
+                "?response=json&queryYear=" + str(roc_year)
+            )
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+            data = r.json()
             if data.get("stat") == "OK":
                 for item in data.get("data", []):
                     parts = item[0].strip().split("/")
                     if len(parts) == 3:
                         try:
-                            holidays.add(
-                                str(int(parts[0]) + 1911) + "-" + parts[1] + "-" + parts[2]
-                            )
+                            date_str = (str(int(parts[0]) + 1911) +
+                                        "-" + parts[1] + "-" + parts[2])
+                            holidays.add(date_str)
                         except ValueError:
                             continue
+            count = sum(1 for h in holidays if h.startswith(str(year)))
+            print("  " + str(year) + " 年假日: " + str(count) + " 天")
         except Exception as e:
             print("❌ " + str(year) + " 假日失敗: " + str(e))
 
+    # API 失敗時的備援清單
     if not holidays:
+        print("⚠️ 使用內建備援假日清單")
         holidays = {
-            "2025-01-01","2025-01-27","2025-01-28","2025-01-29","2025-01-30",
-            "2025-01-31","2025-02-28","2025-04-03","2025-04-04","2025-05-01",
-            "2025-05-30","2025-10-10","2026-01-01","2026-02-12","2026-02-13",
-            "2026-02-16","2026-02-17","2026-02-18","2026-02-19","2026-02-20",
-            "2026-04-03","2026-04-06","2026-05-01","2026-06-19",
-            "2026-09-25","2026-10-09","2026-10-10",
+            # 2025
+            "2025-01-01", "2025-01-27", "2025-01-28", "2025-01-29",
+            "2025-01-30", "2025-01-31", "2025-02-28", "2025-04-03",
+            "2025-04-04", "2025-05-01", "2025-05-30", "2025-10-10",
+            # 2026
+            "2026-01-01",
+            "2026-02-12", "2026-02-13", "2026-02-16", "2026-02-17",
+            "2026-02-18", "2026-02-19", "2026-02-20",
+            "2026-04-03", "2026-04-06", "2026-05-01", "2026-06-19",
+            "2026-09-25", "2026-10-09", "2026-10-10",
         }
-    print("✅ 載入 " + str(len(holidays)) + " 個假日")
+
+    print("✅ 共載入 " + str(len(holidays)) + " 個假日")
     return holidays
 
 
 # ==========================================
-# 4. 交易日判斷
+# 5. 交易日判斷
 # ==========================================
 def is_trading_day(dt, holidays):
     if dt.weekday() >= 5:
@@ -132,7 +147,7 @@ def is_trading_day(dt, holidays):
 
 
 # ==========================================
-# 5. 微台指結算日（每月第三個星期三）
+# 6. 微台指結算日（每月第三個星期三，遇假日順延）
 # ==========================================
 def get_settlement_date(year, month, holidays):
     count = 0
@@ -149,10 +164,11 @@ def get_settlement_date(year, month, holidays):
                 return d
     return None
 
+
 def get_settlements(holidays):
-    now = datetime.datetime.now(TW_TIMEZONE)
+    now  = datetime.datetime.now(TW_TIMEZONE)
     y, m = now.year, now.month
-    cur = get_settlement_date(y, m, holidays)
+    cur  = get_settlement_date(y, m, holidays)
     if cur and now.date() > cur:
         m = m % 12 + 1
         y = y + (1 if m == 1 else 0)
@@ -161,8 +177,9 @@ def get_settlements(holidays):
     ny = cur.year + (1 if nm == 1 else 0)
     return cur, get_settlement_date(ny, nm, holidays)
 
+
 def trading_days_until(target, holidays):
-    d = datetime.datetime.now(TW_TIMEZONE).date()
+    d     = datetime.datetime.now(TW_TIMEZONE).date()
     count = 0
     while d < target:
         d += datetime.timedelta(days=1)
@@ -172,15 +189,16 @@ def trading_days_until(target, holidays):
 
 
 # ==========================================
-# 6. 讀取 Google Sheet 部位
+# 7. 讀取 Google Sheet 部位
 # ==========================================
 def load_position():
-    print("📋 讀取部位...")
+    print("📋 讀取 Google Sheet 部位...")
     try:
         r = requests.get(GSHEET_CSV_URL, timeout=15)
         r.encoding = "utf-8"
         lines = [l for l in r.text.strip().splitlines() if l.strip()]
         if len(lines) < 2:
+            print("⚠️ Sheet 資料不足，請確認第二列有填入部位")
             return None
         row = lines[1].split(",")
         pos = {
@@ -190,45 +208,59 @@ def load_position():
             "note":        row[3].strip() if len(row) > 3 else "",
             "updated_at":  row[4].strip() if len(row) > 4 else "未知",
         }
-        print("✅ " + str(pos["lots"]) + " 口 @ " + str(pos["entry_price"]))
+        print("✅ 部位: " + str(pos["lots"]) + " 口 @ " + str(pos["entry_price"]))
         return pos
     except Exception as e:
-        print("❌ Sheet 失敗: " + str(e))
+        print("❌ Sheet 讀取失敗: " + str(e))
         return None
 
 
 # ==========================================
-# 7. 抓取各市場行情
+# 8. 抓取各市場行情
 # ==========================================
 def get_tw_index():
-    """台指（加權指數）"""
+    print("📊 抓取台指現價...")
     try:
         hist = yf.Ticker("^TWII").history(period="3d")
         if len(hist) < 2:
             return None, None
         cur  = float(hist.iloc[-1]["Close"])
         prev = float(hist.iloc[-2]["Close"])
-        return cur, (cur - prev) / prev * 100
+        chg  = (cur - prev) / prev * 100
+        print("  台指: " + str(round(cur, 0)) + " (" + str(round(chg, 2)) + "%)")
+        return cur, chg
     except Exception as e:
         print("❌ 台指失敗: " + str(e))
         return None, None
 
+
+def get_txf_night():
+    print("🌙 抓取台指期夜盤...")
+    try:
+        hist = yf.Ticker("TXF=F").history(period="3d")
+        if len(hist) < 2:
+            return None, None
+        cur  = float(hist.iloc[-1]["Close"])
+        prev = float(hist.iloc[-2]["Close"])
+        chg  = (cur - prev) / prev * 100
+        print("  台指期夜盤: " + str(round(cur, 0)) + " (" + str(round(chg, 2)) + "%)")
+        return cur, chg
+    except Exception as e:
+        print("❌ 台指期夜盤失敗: " + str(e))
+        return None, None
+
+
 def get_us_markets():
-    """S&P500、納斯達克、VIX"""
+    print("🇺🇸 抓取美股行情...")
     results = {}
-    tickers = {
-        "sp500": "^GSPC",
-        "nasdaq": "^IXIC",
-        "vix": "^VIX",
-    }
-    for name, ticker in tickers.items():
+    for name, ticker in [("nasdaq", "^IXIC"), ("vix", "^VIX")]:
         try:
             hist = yf.Ticker(ticker).history(period="3d")
             if len(hist) >= 2:
                 cur  = float(hist.iloc[-1]["Close"])
                 prev = float(hist.iloc[-2]["Close"])
-                chg  = (cur - prev) / prev * 100
-                results[name] = {"price": cur, "chg": chg}
+                results[name] = {"price": cur, "chg": (cur - prev) / prev * 100}
+                print("  " + name + ": " + str(round(cur, 1)))
             else:
                 results[name] = None
         except Exception as e:
@@ -236,22 +268,9 @@ def get_us_markets():
             results[name] = None
     return results
 
-def get_txf_night():
-    """台指期夜盤（TXF=F）"""
-    try:
-        hist = yf.Ticker("TXF=F").history(period="3d")
-        if len(hist) >= 2:
-            cur  = float(hist.iloc[-1]["Close"])
-            prev = float(hist.iloc[-2]["Close"])
-            return cur, (cur - prev) / prev * 100
-        return None, None
-    except Exception as e:
-        print("❌ 台指期夜盤失敗: " + str(e))
-        return None, None
-
 
 # ==========================================
-# 8. 風險計算
+# 9. 風險計算
 # ==========================================
 def calc_risk(position, current_price, margin_init, margin_maint):
     lots        = position["lots"]
@@ -267,14 +286,15 @@ def calc_risk(position, current_price, margin_init, margin_maint):
     call_price = entry_price - buf_pts
 
     return {
+        "current_price":     current_price,
         "pnl_points":        round(pnl_points, 0),
         "pnl_twd":           round(pnl_twd, 0),
         "equity":            round(equity, 0),
         "margin_ratio":      round(ratio, 1),
         "buffer_points":     round(buf_pts, 1),
         "margin_call_price": round(call_price, 0),
-        "current_price":     current_price,
     }
+
 
 def danger_label(ratio):
     if ratio < 80:  return "🔴 極度危險｜立即補保或減碼！"
@@ -284,7 +304,7 @@ def danger_label(ratio):
 
 
 # ==========================================
-# 9. 組裝日盤訊息
+# 10. 組裝日盤訊息
 # ==========================================
 def build_day_message(pos, risk, tw_chg, settlement, next_s,
                       days_left, margin_init, margin_maint, alerts):
@@ -314,7 +334,7 @@ def build_day_message(pos, risk, tw_chg, settlement, next_s,
         "",
         "━━━ 💀 保證金風險 ━━━",
         "💰 帳戶權益: " + str(int(risk["equity"])) + " 元",
-        "📋 原始/維持: " + str(margin_init) + "/" + str(margin_maint) + " 元",
+        "📋 原始/維持: " + str(margin_init) + " / " + str(margin_maint) + " 元（期交所公告）",
         "📉 保證金比率: " + str(risk["margin_ratio"]) + "%",
         "🚨 " + danger_label(risk["margin_ratio"]),
         "🛡️ 距追繳: " + str(risk["buffer_points"]) + " 點",
@@ -333,7 +353,7 @@ def build_day_message(pos, risk, tw_chg, settlement, next_s,
 
 
 # ==========================================
-# 10. 組裝夜盤訊息
+# 11. 組裝夜盤訊息
 # ==========================================
 def build_night_message(pos, risk, txf_price, txf_chg,
                         us_data, settlement, next_s, days_left, alerts):
@@ -355,33 +375,32 @@ def build_night_message(pos, risk, txf_price, txf_chg,
         "━━━ 🌙 夜盤行情 ━━━",
     ]
 
-    # 台指期夜盤
     if txf_price:
-        txf_icon = "🔺" if txf_chg >= 0 else "🔻"
+        icon = "🔺" if txf_chg >= 0 else "🔻"
         lines.append("🇹🇼 台指期夜盤: " + str(int(txf_price)) +
-                     " (" + txf_icon + str(round(txf_chg, 2)) + "%)")
+                     " (" + icon + str(round(txf_chg, 2)) + "%)")
     else:
         lines.append("🇹🇼 台指期夜盤: 資料不足")
 
-    # 納斯達克
     if us_data.get("nasdaq"):
-        nd = us_data["nasdaq"]
+        nd   = us_data["nasdaq"]
         icon = "🔺" if nd["chg"] >= 0 else "🔻"
         lines.append("🇺🇸 那斯達克: " + str(round(nd["price"], 0)) +
                      " (" + icon + str(round(nd["chg"], 2)) + "%)")
 
-    # VIX
     if us_data.get("vix"):
-        vd   = us_data["vix"]
+        vd    = us_data["vix"]
         vicon = "🔴" if vd["price"] >= VIX_WARN else "🟡" if vd["price"] >= 20 else "🟢"
+        vsign = "+" if vd["chg"] >= 0 else ""
         lines.append("😱 VIX: " + str(round(vd["price"], 1)) +
                      " " + vicon +
-                     " (" + ("+" if vd["chg"] >= 0 else "") + str(round(vd["chg"], 2)) + "%)")
+                     " (" + vsign + str(round(vd["chg"], 2)) + "%)")
 
     lines += [
         "",
         "━━━ 🎯 部位狀況 ━━━",
-        "📦 " + str(pos["lots"]) + " 口 @ " + str(int(pos["entry_price"])) + " 點（做多）",
+        "📦 " + str(pos["lots"]) + " 口 @ " +
+            str(int(pos["entry_price"])) + " 點（做多）",
         pnl_icon + " 未實現: " + sign + str(int(risk["pnl_twd"])) +
             " 元 / " + sign + str(int(risk["pnl_points"])) + " 點",
         "💰 帳戶權益: " + str(int(risk["equity"])) + " 元",
@@ -392,29 +411,36 @@ def build_night_message(pos, risk, txf_price, txf_chg,
         "━━━ 📅 轉倉 ━━━",
         "📌 結算日: " + settlement.strftime("%Y/%m/%d") +
             "（剩 " + str(days_left) + " 個交易日）",
+        "➡️ 下月結算: " + next_s.strftime("%Y/%m/%d"),
     ]
 
+    if pos.get("note"):
+        lines += ["", "📝 " + pos["note"]]
+    lines += ["", "🔄 更新: " + pos.get("updated_at", "未知")]
     return "\n".join(lines)
 
 
 # ==========================================
-# 11. LINE 發送
+# 12. LINE 發送（只發給你一個人）
 # ==========================================
 def send_line(msg):
     if not LINE_TOKEN or not LINE_USER_ID:
-        print("⚠️ 未設定 LINE Token")
+        print("⚠️ 未設定 LINE_TOKEN 或 LINE_USER_ID")
         return False
     try:
         resp = requests.post(
             "https://api.line.me/v2/bot/message/push",
-            headers={"Content-Type": "application/json",
-                     "Authorization": "Bearer " + LINE_TOKEN},
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + LINE_TOKEN,
+            },
             json={"to": LINE_USER_ID,
                   "messages": [{"type": "text", "text": msg}]},
             timeout=15,
         )
         ok = resp.status_code == 200
-        print("✅ LINE 成功" if ok else "❌ LINE 失敗 HTTP " + str(resp.status_code))
+        print("✅ LINE 成功" if ok else
+              "❌ LINE 失敗 HTTP " + str(resp.status_code) + ": " + resp.text)
         return ok
     except Exception as e:
         print("❌ LINE 例外: " + str(e))
@@ -422,61 +448,58 @@ def send_line(msg):
 
 
 # ==========================================
-# 12. 主程式
+# 13. 主程式
 # ==========================================
 if __name__ == "__main__":
     now = datetime.datetime.now(TW_TIMEZONE)
     print("🚀 微台指監控啟動 — " + now.strftime("%Y-%m-%d %H:%M:%S"))
 
-    # 假日抓取
+    # Step 1：抓假日（每次執行都抓最新）
     holidays = fetch_tw_holidays()
 
-    # 判斷目前時段
+    # Step 2：判斷時段
     session = get_session()
     print("📍 目前時段: " + session)
 
-    # 夜盤時段要跨日判斷：
-    # 夜盤屬於「前一個交易日的延伸」
-    # 判斷邏輯：夜盤 00:00~05:00 屬於前天的夜盤（昨天是否為交易日）
-    #           夜盤 15:00~24:00 屬於今天的夜盤（今天是否為交易日）
-    # 夜盤交易日判斷邏輯：
-    # 台指期夜盤屬於「當天開始的夜盤」
-    # 15:00~23:59 → 今天必須是交易日
-    # 00:00~05:00 → 昨天必須是交易日（夜盤是昨天的延伸）
-    # 但週六凌晨（週五夜盤結束）也要放行
-    if session == "NIGHT":
-        if now.hour < 6:
-            # 凌晨段：這是前一個交易日夜盤的延伸
-            check_dt = now - datetime.timedelta(days=1)
-        else:
-            # 下午段（15:00後）：今天開始的夜盤
-            check_dt = now
-        # 只要 check_dt 那天是交易日就放行
-        if not is_trading_day(check_dt, holidays):
-            print("😴 非交易日夜盤，跳過。")
-            exit(0)
-    elif session == "DAY":
+    # Step 3：交易日檢查
+    if session == "DAY":
         if not is_trading_day(now, holidays):
             print("😴 今日非交易日，跳過。")
             exit(0)
+
+    elif session == "NIGHT":
+        # 凌晨 00:00~05:00 屬於前一天夜盤的延伸，檢查前一天是否為交易日
+        # 下午 15:00~23:59 屬於今天開始的夜盤，檢查今天是否為交易日
+        check_dt = now - datetime.timedelta(days=1) if now.hour < 6 else now
+        if not is_trading_day(check_dt, holidays):
+            print("😴 非交易日夜盤，跳過。")
+            exit(0)
+
     else:
-        print("😴 休市中，跳過。")
+        print("😴 休市中（日盤與夜盤之間），跳過。")
         exit(0)
 
-    # 共用資料抓取
+    # Step 4：抓保證金
     margin_init, margin_maint = fetch_mxf_margin()
+
+    # Step 5：讀取部位（Sheet 失敗時用預設測試值）
     position = load_position() or {
-        "lots": 1, "entry_price": 22000, "margin_cash": 25000,
-        "note": "預設測試部位", "updated_at": "未設定",
+        "lots":        1,
+        "entry_price": 22000,
+        "margin_cash": 25000,
+        "note":        "預設測試部位，請更新 Google Sheet",
+        "updated_at":  "未設定",
     }
+
+    # Step 6：計算結算日
     settlement, next_s = get_settlements(holidays)
     days_left = trading_days_until(settlement, holidays)
 
-    # ── 日盤邏輯 ──────────────────────────────────────
+    # ── 日盤 ──────────────────────────────────────────
     if session == "DAY":
         tw_price, tw_chg = get_tw_index()
         if tw_price is None:
-            print("❌ 無法取得台指現價")
+            print("❌ 無法取得台指現價，中止")
             exit(1)
 
         risk = calc_risk(position, tw_price, margin_init, margin_maint)
@@ -489,15 +512,18 @@ if __name__ == "__main__":
         if tw_chg <= CRASH_TW_PCT:
             alerts.append("📉 台指急跌 " + str(round(tw_chg, 2)) + "%！")
 
-        msg = build_day_message(position, risk, tw_chg, settlement, next_s,
-                                days_left, margin_init, margin_maint, alerts)
+        msg = build_day_message(
+            position, risk, tw_chg,
+            settlement, next_s, days_left,
+            margin_init, margin_maint, alerts,
+        )
 
-    # ── 夜盤邏輯 ──────────────────────────────────────
+    # ── 夜盤 ──────────────────────────────────────────
     else:
         txf_price, txf_chg = get_txf_night()
         us_data = get_us_markets()
 
-        # 夜盤用台指期夜盤價格計算損益，抓不到則用加權指數備援
+        # 夜盤損益用台指期夜盤價格，抓不到則用加權指數備援
         if txf_price:
             price_for_risk = txf_price
         else:
@@ -514,12 +540,15 @@ if __name__ == "__main__":
         if txf_chg is not None and txf_chg <= CRASH_TW_PCT:
             alerts.append("📉 台指期夜盤急跌 " + str(round(txf_chg, 2)) + "%！")
         if us_data.get("nasdaq") and us_data["nasdaq"]["chg"] <= CRASH_US_PCT:
-            alerts.append("🇺🇸 那斯達克急跌 " + str(round(us_data["nasdaq"]["chg"], 2)) + "%！")
+            alerts.append("🇺🇸 那斯達克急跌 " +
+                          str(round(us_data["nasdaq"]["chg"], 2)) + "%！")
         if us_data.get("vix") and us_data["vix"]["price"] >= VIX_WARN:
             alerts.append("😱 VIX 超過 " + str(VIX_WARN) + "，市場恐慌！")
 
-        msg = build_night_message(position, risk, txf_price, txf_chg or 0,
-                                  us_data, settlement, next_s, days_left, alerts)
+        msg = build_night_message(
+            position, risk, txf_price, txf_chg or 0,
+            us_data, settlement, next_s, days_left, alerts,
+        )
 
     print("\n" + "=" * 45)
     print(msg)
