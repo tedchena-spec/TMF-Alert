@@ -89,8 +89,9 @@ def fetch_tw_holidays():
     now = datetime.datetime.now(TW_TIMEZONE)
     for year in [now.year, now.year + 1]:
         try:
+            roc_year = year - 1911   # ✅ 西元年轉民國年
             url = ("https://www.twse.com.tw/rwd/zh/holiday/holidaySchedule"
-                   "?response=json&queryYear=" + str(year))
+                   "?response=json&queryYear=" + str(roc_year))
             data = requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
                                 timeout=15).json()
             if data.get("stat") == "OK":
@@ -438,13 +439,19 @@ if __name__ == "__main__":
     # 夜盤屬於「前一個交易日的延伸」
     # 判斷邏輯：夜盤 00:00~05:00 屬於前天的夜盤（昨天是否為交易日）
     #           夜盤 15:00~24:00 屬於今天的夜盤（今天是否為交易日）
+    # 夜盤交易日判斷邏輯：
+    # 台指期夜盤屬於「當天開始的夜盤」
+    # 15:00~23:59 → 今天必須是交易日
+    # 00:00~05:00 → 昨天必須是交易日（夜盤是昨天的延伸）
+    # 但週六凌晨（週五夜盤結束）也要放行
     if session == "NIGHT":
         if now.hour < 6:
-            # 深夜段：判斷昨天是否為交易日
+            # 凌晨段：這是前一個交易日夜盤的延伸
             check_dt = now - datetime.timedelta(days=1)
         else:
-            # 下午段：判斷今天是否為交易日
+            # 下午段（15:00後）：今天開始的夜盤
             check_dt = now
+        # 只要 check_dt 那天是交易日就放行
         if not is_trading_day(check_dt, holidays):
             print("😴 非交易日夜盤，跳過。")
             exit(0)
