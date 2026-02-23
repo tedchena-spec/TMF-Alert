@@ -225,34 +225,88 @@ def load_position():
 # ==========================================
 def get_tw_index():
     print("📊 抓取台指現價...")
+
+    # ── 來源 1：期交所即時行情 API（台指期日盤）──────────
+    try:
+        r = requests.get(
+            "https://mis.taifex.com.tw/futures/api/getQuoteList",
+            params={"MarketType": "0", "SymbolType": "F", "BaseDate": "", "SymbolId": "TXF"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        data = r.json()
+        items = data.get("RtData", {}).get("QuoteList", [])
+        if items:
+            cur  = float(items[0].get("CLastPrice", 0))
+            prev = float(items[0].get("CRefPrice", 0))
+            if cur > 0 and prev > 0:
+                chg = (cur - prev) / prev * 100
+                print("  ✅ 台指現價（來源：期交所 API）: " + str(int(cur)) +
+                      " (" + str(round(chg, 2)) + "%)")
+                return cur, chg
+        print("  ⚠️ 期交所 API 無資料")
+    except Exception as e:
+        print("  ❌ 期交所 API 失敗: " + str(e))
+
+    # ── 來源 2：Yahoo Finance yfinance（^TWII 加權指數）──
     try:
         hist = yf.Ticker("^TWII").history(period="3d")
-        if len(hist) < 2:
-            return None, None
-        cur  = float(hist.iloc[-1]["Close"])
-        prev = float(hist.iloc[-2]["Close"])
-        chg  = (cur - prev) / prev * 100
-        print("  台指: " + str(round(cur, 0)) + " (" + str(round(chg, 2)) + "%)")
-        return cur, chg
+        if len(hist) >= 2:
+            cur  = float(hist.iloc[-1]["Close"])
+            prev = float(hist.iloc[-2]["Close"])
+            chg  = (cur - prev) / prev * 100
+            print("  ✅ 台指現價（來源：Yahoo Finance ^TWII 加權指數）: " + str(round(cur, 0)) +
+                  " (" + str(round(chg, 2)) + "%)")
+            return cur, chg
+        print("  ⚠️ Yahoo Finance 資料不足")
     except Exception as e:
-        print("❌ 台指失敗: " + str(e))
-        return None, None
+        print("  ❌ Yahoo Finance 失敗: " + str(e))
+
+    print("  ❌ 台指現價：所有來源均失敗")
+    return None, None
 
 
 def get_txf_night():
     print("🌙 抓取台指期夜盤...")
+
+    # ── 來源 1：期交所即時行情 API ──────────────────────
+    try:
+        r = requests.get(
+            "https://mis.taifex.com.tw/futures/api/getQuoteList",
+            params={"MarketType": "1", "SymbolType": "F", "BaseDate": "", "SymbolId": "TXF"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        data = r.json()
+        items = data.get("RtData", {}).get("QuoteList", [])
+        if items:
+            cur  = float(items[0].get("CLastPrice", 0))
+            prev = float(items[0].get("CRefPrice", 0))
+            if cur > 0 and prev > 0:
+                chg = (cur - prev) / prev * 100
+                print("  ✅ 台指期夜盤（來源：期交所 API）: " + str(int(cur)) +
+                      " (" + str(round(chg, 2)) + "%)")
+                return cur, chg
+        print("  ⚠️ 期交所 API 無資料")
+    except Exception as e:
+        print("  ❌ 期交所 API 失敗: " + str(e))
+
+    # ── 來源 2：Yahoo Finance yfinance（TXF=F）─────────
     try:
         hist = yf.Ticker("TXF=F").history(period="3d")
-        if len(hist) < 2:
-            return None, None
-        cur  = float(hist.iloc[-1]["Close"])
-        prev = float(hist.iloc[-2]["Close"])
-        chg  = (cur - prev) / prev * 100
-        print("  台指期夜盤: " + str(round(cur, 0)) + " (" + str(round(chg, 2)) + "%)")
-        return cur, chg
+        if len(hist) >= 2:
+            cur  = float(hist.iloc[-1]["Close"])
+            prev = float(hist.iloc[-2]["Close"])
+            chg  = (cur - prev) / prev * 100
+            print("  ✅ 台指期夜盤（來源：Yahoo Finance yfinance）: " + str(int(cur)) +
+                  " (" + str(round(chg, 2)) + "%)")
+            return cur, chg
+        print("  ⚠️ Yahoo Finance 資料不足")
     except Exception as e:
-        print("❌ 台指期夜盤失敗: " + str(e))
-        return None, None
+        print("  ❌ Yahoo Finance 失敗: " + str(e))
+
+    print("  ❌ 台指期夜盤：所有來源均失敗，將使用加權指數備援")
+    return None, None
 
 
 def get_us_markets():
