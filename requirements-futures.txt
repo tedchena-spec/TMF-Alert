@@ -1,8 +1,0 @@
-yfinance>=0.2.40
-requests>=2.31.0
-pytz>=2024.1
-pandas>=2.1.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
-urllib3>=2.0.0
-tradingview-ta>=3.3.0
